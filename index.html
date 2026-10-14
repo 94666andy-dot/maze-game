@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>聲音控制冒險迷宮 - 聲控上下左右</title>
+  <!-- 載入 TensorFlow.js 與 Speech Commands SDK -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/speech-commands@0.4.0/dist/speech-commands.min.js"></script>
+  <style>
+    :root {
+      --bg-color: #0f111a;
+      --card-bg: #1a1c2b;
+      --panel-bg: #222538;
+      --primary: #00f5d4;
+      --secondary: #ffb703;
+      --danger: #ff0054;
+      --text-main: #f8f9fa;
+      --text-muted: #9aa0a6;
+      --wall-color: #2b2e4a;
+      --wall-border: #4a4e69;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px 16px;
+      min-height: 100vh;
+      transition: background-color 0.6s ease;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 20px;
+      max-width: 640px;
+    }
+
+    h1 {
+      font-size: 28px;
+      color: var(--secondary);
+      margin-bottom: 8px;
+      letter-spacing: 1px;
+    }
+
+    .desc {
+      font-size: 14px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    .desc b {
+      color: var(--primary);
+    }
+
+    #action-bar {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 20px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    button.btn {
+      padding: 10px 22px;
+      font-size: 15px;
+      font-weight: 700;
+      color: #0f111a;
+      background: var(--primary);
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      box-shadow: 0 4px 14px rgba(0, 245, 212, 0.35);
+      transition: all 0.2s ease;
+    }
+
+    button.btn:hover:not(:disabled) {
+      background: #00bbf9;
+      transform: translateY(-1px);
+    }
+
+    button.btn:disabled {
+      background: #495057;
+      color: #868e96;
+      cursor: not-allowed;
+      box-shadow: none;
+      transform: none;
+    }
+
+    .badge {
+      font-size: 15px;
+      font-weight: bold;
+      background: var(--card-bg);
+      padding: 10px 18px;
+      border-radius: 8px;
+      border: 1px solid #333852;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .score-value {
+      color: var(--secondary);
+      font-size: 18px;
+    }
+
+    #main-layout {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 24px;
+      justify-content: center;
+      align-items: flex-start;
+      max-width: 960px;
+      width: 100%;
+    }
+
+    /* 迷宮區域 */
+    #maze-panel {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    canvas#mazeCanvas {
+      background: #141622;
+      border: 4px solid var(--secondary);
+      border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+    }
+
+    /* 側邊控制與監控面板 */
+    #sidebar {
+      background: var(--card-bg);
+      border-radius: 12px;
+      padding: 18px;
+      width: 320px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      border: 1px solid #2d3148;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+    }
+
+    .card-box {
+      background: var(--panel-bg);
+      padding: 12px 14px;
+      border-radius: 8px;
+      border: 1px solid #2e344e;
+    }
+
+    .card-title {
+      font-size: 12px;
+      font-weight: bold;
+      color: #90e0ef;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+    }
+
+    /* 麥克風音訊波形 Canvas */
+    canvas#waveCanvas {
+      width: 100%;
+      height: 64px;
+      background: #12141f;
+      border-radius: 6px;
+      display: block;
+    }
+
+    /* 辨識進度條 */
+    .bar-row {
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+
+    .bar-header {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 4px;
+    }
+
+    .bar-track {
+      background: #12141f;
+      border-radius: 4px;
+      height: 10px;
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--primary);
+      border-radius: 4px;
+      transition: width 0.1s linear;
+    }
+
+    .bar-fill.highlight {
+      background: var(--secondary);
+    }
+
+    #status-display {
+      min-height: 24px;
+      font-size: 14px;
+      font-weight: bold;
+      color: var(--primary);
+      text-align: center;
+      line-height: 1.4;
+    }
+
+    .help-keyboard {
+      font-size: 11px;
+      color: #717790;
+      text-align: center;
+      margin-top: 4px;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>聲音控制冒險迷宮</h1>
+    <p class="desc">
+      請對麥克風發出 <b>「上」</b>、<b>「下」</b>、<b>「左」</b>、<b>「右」</b> 語音指令引導光點抵達終點！<br>
+      每撞一次牆扣 5 分，走出迷宮結算最終得分。
+    </p>
+  </header>
+
+  <div id="action-bar">
+    <button id="start-btn" class="btn" onclick="startGame()">啟動麥克風與辨識</button>
+    <button id="reset-btn" class="btn" style="background: #3a3f58; color: #fff; display: none;" onclick="resetGame()">重新開始</button>
+    <div class="badge">探索分數：<span id="score-text" class="score-value">100</span></div>
+  </div>
+
+  <div id="main-layout">
+    <!-- 迷宮畫面 -->
+    <div id="maze-panel">
+      <canvas id="mazeCanvas" width="400" height="400"></canvas>
+    </div>
+
+    <!-- 側邊狀態面板 -->
+    <div id="sidebar">
+      <!-- 麥克風音訊波形視覺化 -->
+      <div class="card-box">
+        <div class="card-title">麥克風波形畫面 (Audio Visualizer)</div>
+        <canvas id="waveCanvas" width="280" height="64"></canvas>
+      </div>
+
+      <!-- 即時類別與信心分數 -->
+      <div class="card-box">
+        <div class="card-title">目前辨識結果與信心分數</div>
+        <div id="labels-container">
+          <div style="font-size: 12px; color: #717790;">點擊啟動按鈕載入模型...</div>
+        </div>
+      </div>
+
+      <!-- 系統動態回饋 -->
+      <div class="card-box">
+        <div class="card-title">遊戲狀態回饋</div>
+        <div id="status-display">等待授權麥克風</div>
+      </div>
+
+      <div class="help-keyboard">支援鍵盤方向鍵輔助測試</div>
+    </div>
+  </div>
+
+  <script>
+    // 你的 Teachable Machine 模型連結
+    const MODEL_URL = "https://teachablemachine.withgoogle.com/models/jyAulJqiF/";
+
+    let recognizer = null;
+    let audioCtx = null;
+    let analyser = null;
+    let micStream = null;
+    let waveAnimId = null;
+
+    let score = 100;
+    let isGameOver = false;
+
+    // 消抖與防重複觸發：發聲走步後需回落背景音或超時才能走下一步
+    let isArmed = true;
+    let lastActionTime = 0;
+
+    // 10x10 地圖 (1: 牆壁, 0: 通道, 2: 終點)
+    const mazeMap = [
+      [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+      [1, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+      [1, 0, 1, 0, 1, 0, 1, 1, 0, 1],
+      [1, 0, 1, 0, 0, 0, 0, 1, 0, 1],
+      [1, 0, 1, 1, 1, 1, 0, 1, 0, 1],
+      [1, 0, 0, 0, 0, 1, 0, 0, 0, 1],
+      [1, 1, 1, 1, 0, 1, 1, 1, 0, 1],
+      [1, 0, 0, 0, 0, 0, 0, 1, 0, 1],
+      [1, 0, 1, 1, 1, 1, 0, 0, 2, 1],
+      [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    ];
+    const cellSize = 40;
+    let player = { x: 1, y: 1 };
+
+    const mazeCanvas = document.getElementById("mazeCanvas");
+    const mCtx = mazeCanvas.getContext("2d");
+
+    // Web Audio 合成音效
+    function playTone(frequency, duration, type = "sine") {
+      try {
+        if (!audioCtx) return;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(frequency, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
+      } catch (err) {
+        console.warn("音效播放失敗:", err);
+      }
+    }
+
+    // 繪製迷宮與角色
+    function drawMaze() {
+      mCtx.clearRect(0, 0, mazeCanvas.width, mazeCanvas.height);
+
+      for (let r = 0; r < 10; r++) {
+        for (let c = 0; c < 10; c++) {
+          const tile = mazeMap[r][c];
+          if (tile === 1) {
+            mCtx.fillStyle = "#202336";
+            mCtx.fillRect(c * cellSize, r * cellSize, cellSize, cellSize);
+            mCtx.strokeStyle = "#353a57";
+            mCtx.lineWidth = 1;
+            mCtx.strokeRect(c * cellSize, r * cellSize, cellSize, cellSize);
+          } else if (tile === 2) {
+            // 終點
+            mCtx.fillStyle = "#ff0054";
+            mCtx.fillRect(c * cellSize, r * cellSize, cellSize, cellSize);
+            mCtx.fillStyle = "#ffffff";
+            mCtx.font = "bold 12px sans-serif";
+            mCtx.textAlign = "center";
+            mCtx.textBaseline = "middle";
+            mCtx.fillText("GOAL", c * cellSize + cellSize / 2, r * cellSize + cellSize / 2);
+          }
+        }
+      }
+
+      // 玩家光點
+      const px = player.x * cellSize + cellSize / 2;
+      const py = player.y * cellSize + cellSize / 2;
+      mCtx.fillStyle = "#00f5d4";
+      mCtx.shadowColor = "#00f5d4";
+      mCtx.shadowBlur = 12;
+      mCtx.beginPath();
+      mCtx.arc(px, py, cellSize / 2.7, 0, Math.PI * 2);
+      mCtx.fill();
+      mCtx.shadowBlur = 0;
+    }
+
+    // 移動與碰撞邏輯
+    function tryMove(dir) {
+      if (isGameOver) return;
+
+      let targetX = player.x;
+      let targetY = player.y;
+
+      if (dir === "上") targetY -= 1;
+      else if (dir === "下") targetY += 1;
+      else if (dir === "左") targetX -= 1;
+      else if (dir === "右") targetX += 1;
+
+      // 撞牆判定
+      if (mazeMap[targetY][targetX] === 1) {
+        score = Math.max(0, score - 5);
+        document.getElementById("score-text").innerText = score;
+        document.getElementById("status-display").innerText = `⚠️ 往【${dir}】撞牆！扣 5 分`;
+        document.getElementById("status-display").style.color = "#ff0054";
+        playTone(130, 0.16, "sawtooth");
+        return;
+      }
+
+      // 成功前進
+      player.x = targetX;
+      player.y = targetY;
+      document.getElementById("status-display").innerText = `🧭 指令成功：往【${dir}】移動`;
+      document.getElementById("status-display").style.color = "#00f5d4";
+      playTone(480, 0.08, "sine");
+      drawMaze();
+
+      // 抵達終點
+      if (mazeMap[player.y][player.x] === 2) {
+        isGameOver = true;
+        document.body.style.backgroundColor = "#261a38";
+        document.getElementById("status-display").innerText = `🎉 恭喜通關！最終得分：${score}`;
+        document.getElementById("status-display").style.color = "#ffb703";
+        document.getElementById("reset-btn").style.display = "inline-block";
+
+        // 通關和弦
+        const notes = [523.25, 659.25, 783.99, 1046.50];
+        notes.forEach((freq, idx) => {
+          setTimeout(() => playTone(freq, 0.28, "triangle"), idx * 120);
+        });
+
+        setTimeout(() => {
+          alert(`🏆 恭喜成功走出迷宮！\n最終通關積分：${score} 分`);
+        }, 550);
+      }
+    }
+
+    // 重設遊戲
+    function resetGame() {
+      score = 100;
+      isGameOver = false;
+      player = { x: 1, y: 1 };
+      document.getElementById("score-text").innerText = score;
+      document.body.style.backgroundColor = "var(--bg-color)";
+      document.getElementById("status-display").innerText = "🎙️ 聆聽中... 請說出「上、下、左、右」";
+      document.getElementById("status-display").style.color = "var(--primary)";
+      document.getElementById("reset-btn").style.display = "none";
+      drawMaze();
+    }
+
+    // 麥克風音訊波形視覺化 (Web Audio API)
+    async function initAudioVisualizer() {
+      const waveCanvas = document.getElementById("waveCanvas");
+      const wCtx = waveCanvas.getContext("2d");
+
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const source = audioCtx.createMediaStreamSource(micStream);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 64;
+      source.connect(analyser);
+
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+
+      function renderWave() {
+        waveAnimId = requestAnimationFrame(renderWave);
+        analyser.getByteFrequencyData(dataArray);
+
+        wCtx.fillStyle = "#12141f";
+        wCtx.fillRect(0, 0, waveCanvas.width, waveCanvas.height);
+
+        const barWidth = (waveCanvas.width / bufferLength) * 1.5;
+        let x = 0;
+
+        for (let i = 0; i < bufferLength; i++) {
+          const barHeight = (dataArray[i] / 255) * waveCanvas.height;
+          wCtx.fillStyle = `hsl(${140 + dataArray[i] * 0.4}, 100%, 50%)`;
+          wCtx.fillRect(x, waveCanvas.height - barHeight, barWidth - 1, barHeight);
+          x += barWidth;
+        }
+      }
+      renderWave();
+    }
+
+    // 啟動語音辨識與模型
+    async function startGame() {
+      const startBtn = document.getElementById("start-btn");
+      startBtn.disabled = true;
+      document.getElementById("status-display").innerText = "模型載入中，請稍候...";
+
+      try {
+        await initAudioVisualizer();
+
+        const checkpointURL = MODEL_URL + "model.json";
+        const metadataURL = MODEL_URL + "metadata.json";
+
+        recognizer = speechCommands.create(
+          "BROWSER_FFT",
+          undefined,
+          checkpointURL,
+          metadataURL
+        );
+
+        await recognizer.ensureModelLoaded();
+        const labels = recognizer.wordLabels();
+        const labelsContainer = document.getElementById("labels-container");
+        labelsContainer.innerHTML = "";
+
+        labels.forEach(label => {
+          const row = document.createElement("div");
+          row.className = "bar-row";
+          row.id = `label-row-${label}`;
+          row.innerHTML = `
+            <div class="bar-header">
+              <span><b>${label}</b></span>
+              <span id="score-${label}">0%</span>
+            </div>
+            <div class="bar-track">
+              <div class="bar-fill" id="bar-${label}"></div>
+            </div>
+          `;
+          labelsContainer.appendChild(row);
+        });
+
+        document.getElementById("status-display").innerText = "🎙️ 聆聽中... 請說出「上、下、左、右」";
+
+        // 持續即時監聽
+        recognizer.listen(result => {
+          const scores = result.scores;
+          let maxScore = 0;
+          let maxIndex = 0;
+
+          for (let i = 0; i < scores.length; i++) {
+            const val = scores[i];
+            const pct = Math.round(val * 100);
+            const lbl = labels[i];
+
+            const scoreEl = document.getElementById(`score-${lbl}`);
+            const barEl = document.getElementById(`bar-${lbl}`);
+            if (scoreEl) scoreEl.innerText = pct + "%";
+            if (barEl) {
+              barEl.style.width = pct + "%";
+              if (pct > 70) barEl.classList.add("highlight");
+              else barEl.classList.remove("highlight");
+            }
+
+            if (val > maxScore) {
+              maxScore = val;
+              maxIndex = i;
+            }
+          }
+
+          const topLabel = labels[maxIndex].trim();
+          const now = Date.now();
+
+          // 是否為背景噪音或未達門檻
+          const isNoise = topLabel.toLowerCase().includes("background") ||
+                          topLabel.includes("背景") ||
+                          topLabel.includes("雜音");
+
+          if (isNoise || maxScore < 0.75) {
+            isArmed = true; // 回落後解鎖，允許下一次觸發
+            return;
+          }
+
+          // 核心消抖判斷：高於 75% 門檻、解鎖狀態、且間隔大於 360ms
+          if (isArmed && maxScore >= 0.75 && (now - lastActionTime > 360)) {
+            if (topLabel.includes("上")) {
+              tryMove("上");
+            } else if (topLabel.includes("下")) {
+              tryMove("下");
+            } else if (topLabel.includes("左")) {
+              tryMove("左");
+            } else if (topLabel.includes("右")) {
+              tryMove("右");
+            }
+
+            isArmed = false;
+            lastActionTime = now;
+          }
+        }, {
+          includeSpectrogram: false,
+          probabilityThreshold: 0.75,
+          invokeCallbackOnNoiseAndUnknown: true,
+          overlapFactor: 0.5
+        });
+
+      } catch (err) {
+        console.error(err);
+        document.getElementById("status-display").innerText = "啟動失敗，請確認已授權麥克風權限";
+        startBtn.disabled = false;
+      }
+    }
+
+    // 鍵盤方向鍵備用支援
+    window.addEventListener("keydown", (e) => {
+      if (audioCtx && audioCtx.state === "suspended") {
+        audioCtx.resume();
+      }
+      if (e.key === "ArrowUp") tryMove("上");
+      else if (e.key === "ArrowDown") tryMove("下");
+      else if (e.key === "ArrowLeft") tryMove("左");
+      else if (e.key === "ArrowRight") tryMove("右");
+    });
+
+    // 初始繪製
+    drawMaze();
+  </script>
+</body>
+</html>
